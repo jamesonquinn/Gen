@@ -14,19 +14,14 @@
 #     name: julia-1.4
 # ---
 
-print(42)
-
 # +
 using Gen
 using GenViz
 using Statistics
 include("DistributionsBacked.jl")
-#include("DistributionsForwardBacked.jl")
 using PyPlot
 using AdvancedHMC
 using Distributions
-#using ForwardDiff #we'll replace ForwardDiff with Zygote later; for now, follow working model code
-using Zygote
 
 const my_normal = DistributionsBacked{Float64}((mu, sigma) -> 
                             Distributions.Normal(mu, sigma), [true, true], true)
@@ -142,16 +137,19 @@ logger = ActiveFilteredLogger(ignore_sampling_filter, global_logger())
 if !(@isdefined old_logger) #do this only once
     old_logger = global_logger(logger)
 end
+# -
 
-# +
-metric = DiagEuclideanMetric(2) #In principle, this could be "pre-tuned". In practice, why??
-n_NUTS_steps = 2
-n_adapts = 1
-initial_ϵ_reduce_fac = 10
-
-function my_nuts(trace, selection)
+function my_nuts(trace, selection, 
+        n_postadapt_steps = 2,
+        n_adapts = 1,
+        initial_ϵ_reduce_fac = 10)
+    
+    n_NUTS_steps = n_postadapt_steps + n_adapts
+    
     filtered_choices = get_selected(get_choices(trace), selection)
     cur_xy = to_array(filtered_choices, Float64)
+    dimension = length(cur_xy)
+    metric = DiagEuclideanMetric(dimension)
     
     retval_grad = nothing #accepts_output_grad(get_gen_fn(trace)) ? zero(get_retval(trace)) : nothing
     
@@ -206,21 +204,11 @@ show = 5
 ρ = .99
 
 
-samps = mcmc_inference(ρ, iters, my_nuts)
+samps = mcmc_inference(ρ, iters, my_nuts, select(:x,:y))
 samps[(iters-show+1):iters,:]
 # -
 
-cor(samps[1:iters-1,1],samps[2:iters,1])
-
-# +
-using Logging
-
-print(LogLevel)
-print(Logging.Debug)
-# -
-
-
-
-
+println(cor(samps[1:iters-1,1],samps[2:iters,1])) #serial correlation; lower is better
+println(ρ^4) #for comparison, gibbs would be ρ² for each step; ρ⁴ for two steps
 
 
