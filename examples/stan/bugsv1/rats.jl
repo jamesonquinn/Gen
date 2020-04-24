@@ -7,6 +7,7 @@ using Statistics
 include("DistributionsBacked.jl")
 include("IterDeep.jl")
 include("AnimatedPyplot.jl")
+include("nuts.jl")
 using PyPlot
 
 const my_inv_gamma = DistributionsBacked{Float64}((alpha, theta) -> Distributions.InverseGamma(alpha, theta), [true, true], true)
@@ -44,22 +45,7 @@ title("Rat growth")
 
 
 
-@gen function model_prematurely_optimized(xs::Vector,N::Int32,) #single objects across rats (the dim of size N)
-    T = length(xs)
-    xbar = mean(xs) #could be precomputed, but YKWTS about premature optimization...
-
-    mu_alpha ~ normal(0, 100)
-    mu_beta ~ normal(0, 100)
-    sigmasq_y ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
-    sigmasq_alpha ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
-    sigmasq_beta ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
-
-    alpha ~ normal(fill(mu_alpha,N), sqrt(sigmasq_alpha)) # vectorized
-    beta ~ normal(fill(mu_beta,N), sqrt(sigmasq_beta))  # vectorized
-    ys ~ normal([alpha[n] + beta[n] * (x[t] - xbar) for n in 1:N, t in 1:T], sqrt(sigmasq_y))
-end
-;
-
+# +
 @gen function model(xs::Vector,N::Int32,)
     T = length(xs)
     xbar = mean(xs) #could be precomputed, but YKWTS about premature optimization...
@@ -74,13 +60,20 @@ end
     beta = Vector{Float64}(undef,N)
     y = Vector{Vector{Float64}}(undef,N)
     for n in 1:N
-        alpha[n] = ({:data => n => :alpha} ~ normal(mu_alpha, sqrt(sigmasq_alpha))) # vectorized
-        beta[n] = ({:data => n => :beta} ~ normal(mu_beta, sqrt(sigmasq_beta)))  # vectorized
+        alpha[n] = ({:data => n => :alpha} ~ normal(mu_alpha, sqrt(sigmasq_alpha)))
+        beta[n] = ({:data => n => :beta} ~ normal(mu_beta, sqrt(sigmasq_beta)))
         y[n] = ({:data => n => :y} ~ broadcasted_normal([alpha[n] + beta[n] * (xs[t] - xbar) for t = 1:T],
                                             sqrt(sigmasq_y)))
     end
 end
+
+model_transformations = choicemap()
+model_transformations[:sigmasq_y] = transform_log
+model_transformations[:sigmasq_alpha] = transform_log
+model_transformations[:sigmasq_beta] = transform_log
+
 ;
+# -
 
 function make_constraints(ys::Array)
     (N,T) = size(ys)
@@ -98,15 +91,16 @@ function mcmc_inference(xs, ys, num_iters, update)
     observations = make_constraints(ys)
     (trace, _) = generate(model, (xs, N), observations)
     results[1] = trace
+    selection = Gen.complement(select(observations))
     for iter=1:num_iters
-        trace = update(trace,N,observations)
+        trace = update(trace,N,selection)
         results[iter+1] = trace
     end
     results
 end
 ;
 
-function block_mh(tr,N,observations)
+function block_mh(tr,N,selection)
     (tr, _) = mh(tr, select(:mu_alpha, :mu_beta))
     (tr, _) = mh(tr, select(:sigmasq_alpha, :sigmasq_beta, :sigmasq_y))
 
@@ -119,14 +113,14 @@ end
 ;
 
 
-function simple_hmc(tr,N,observations)
-    (tr, _) = hmc(tr, Gen.complement(select(observations)))
+function simple_hmc(tr,N,selection)
+    (tr, _) = hmc(tr, selection)
     tr
 end
 ;
 
 VIZ_INTERVAL = 2
-VIZ_FRAMES = 100
+VIZ_FRAMES = 10
 trs= mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, block_mh)
 tr = trs[end]
 get_choices(tr)
@@ -198,21 +192,36 @@ display_animation("rats_mh", make_axes,
 
 
 
-tr2 = mcmc_inference(xs, ys, 200, simple_hmc)
+VIZ_INTERVAL = 2
+VIZ_FRAMES = 10
+trs2= mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, simple_hmc)
+tr2 = trs2[end]
 get_choices(tr2)
 ;
 
 print("mu_alpha: $(tr2[:mu_alpha]), mu_beta: $(tr2[:mu_beta]), sigma_y: $(sqrt(tr2[:sigmasq_y]))\n")
 
-for i = 1:5
-    tr2 = mcmc_inference(xs, ys, 300, simple_hmc)
-    print("mu_alpha: $(tr2[:mu_alpha]), mu_beta: $(tr2[:mu_beta]), sigma_y: $(sqrt(tr2[:sigmasq_y]))\n")
-end
+display_animation("rats_hmc", make_axes, 
+    (ax)->visualize_rats(trs[1],ax),
+    (ax,i)->visualize_rats(trs[1+i*VIZ_INTERVAL],ax),
+    VIZ_FRAMES)
+    
+
+# +
+
+VIZ_INTERVAL = 1
+VIZ_FRAMES = 100
+trs3= mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, (tr, N, selection)->my_nuts(tr, selection, model_transformations))
+tr3 = trs3[end]
+print("mu_alpha: $(tr3[:mu_alpha]), mu_beta: $(tr3[:mu_beta]), sigma_y: $(sqrt(tr3[:sigmasq_y]))\n")
+;
+# -
 
 
-
-
-
-typeof(tr)
+display_animation("rats_nuts", make_axes, 
+    (ax)->visualize_rats(trs3[1],ax),
+    (ax,i)->visualize_rats(trs3[1+i*VIZ_INTERVAL],ax),
+    VIZ_FRAMES,200)
+    
 
 

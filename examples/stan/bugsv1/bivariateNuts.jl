@@ -16,12 +16,9 @@
 
 # +
 using Gen
-using GenViz
 using Statistics
 include("DistributionsBacked.jl")
-using PyPlot
 using AdvancedHMC
-using Distributions
 
 const my_normal = DistributionsBacked{Float64}((mu, sigma) -> 
                             Distributions.Normal(mu, sigma), [true, true], true)
@@ -210,5 +207,7 @@ samps[(iters-show+1):iters,:]
 
 println(cor(samps[1:iters-1,1],samps[2:iters,1])) #serial correlation; lower is better
 println(ρ^4) #for comparison, gibbs would be ρ² for each step; ρ⁴ for two steps
+
+positive
 
 
