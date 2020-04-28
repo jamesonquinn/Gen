@@ -70,7 +70,7 @@ end
 function importance_cond_binom_for(samps)
     @gen function i_c_b(h, n, α = 1., β = 1.)
         #@warn "i_c_b" samps h n α
-        constraint = choicemap((:h, n))
+        constraint = choicemap((:h, h))
         logweights = Vector{Float64}(undef, samps)
         ps = Vector{Float64}(undef, samps)
         for s in 1:samps
@@ -98,7 +98,7 @@ end
 
 function ret_to_importance_constraint(p)
     constraint = choicemap((:whichOne, 1))
-    constraint[:data => 1 => :ppp] = p
+    constraint[:data => 1 => :p] = p
     constraint
 end
 
@@ -108,28 +108,33 @@ end
 
         
         
+# -
 
-# +
-ns = 50
-ms = 50
-
-[AIDE_compare(importance_cond_binom_for(i), analytic_cond_binom, #generative functions to compare. Should return the important value.
-        (10,10), #any input to generative functions; must be same for both
-        ret_to_importance_constraint, ret_to_analytic_constraint, #take a return value from either generative, and produce constraints for one generative
-        ns, ns, #Number of traces to draw from each
-        ms, ms  #Number of runs of each to use to estimate score
-    ) for i in 1:10]
+importance_cond_binom_for(5)(0,10)
 
 # +
 ns = 5
 ms = 5
 
 [AIDE_compare(importance_cond_binom_for(i), analytic_cond_binom, #generative functions to compare. Should return the important value.
-        (10,10), #any input to generative functions; must be same for both
+        (0,10), #any input to generative functions; must be same for both
         ret_to_importance_constraint, ret_to_analytic_constraint, #take a return value from either generative, and produce constraints for one generative
         ns, ns, #Number of traces to draw from each
         ms, ms  #Number of runs of each to use to estimate score
-    ) for i in 1:10]
+    ) for i in 1:5]
+
+# +
+ns = 50
+ms = 50
+
+[AIDE_compare(importance_cond_binom_for(i), analytic_cond_binom, #generative functions to compare. Should return the important value.
+        (0,10), #any input to generative functions; must be same for both
+        ret_to_importance_constraint, ret_to_analytic_constraint, #take a return value from either generative, and produce constraints for one generative
+        ns, ns, #Number of traces to draw from each
+        ms, ms  #Number of runs of each to use to estimate score
+    ) for i in 1:5]
 # -
+
+
 
 
