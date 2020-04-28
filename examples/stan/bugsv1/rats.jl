@@ -32,6 +32,7 @@ ys_raw = ([151, 145, 147, 155, 135, 159, 141, 159, 177, 134,
     334, 302, 302, 323, 331, 345, 333, 316, 291, 324])
 ys = reshape([Float64(y) for y = ys_raw],30,5)
 xs = [8.0, 15.0, 22.0, 29.0, 36.0]
+ys = ys ./ 100.
 
 # These data are the weights of 30 rats, measured at 5 common age values in days. The model is a simple hierarchical/random effects one; a random intercept and random slope for each rat, plus an error term (presumably representing not measurement error, but just the random variation of individual growth curves).
 
@@ -50,8 +51,8 @@ title("Rat growth")
     T = length(xs)
     xbar = mean(xs) #could be precomputed, but YKWTS about premature optimization...
 
-    mu_alpha ~ normal(0, 100)
-    mu_beta ~ normal(0, 10)
+    mu_alpha ~ normal(0, 10.0)
+    mu_beta ~ normal(0, 1.0)
     sigmasq_y ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
     sigmasq_alpha ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
     sigmasq_beta ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
@@ -161,8 +162,8 @@ function visualize_rats(trace,my_axes)
                         fill(250. - CONF95SIGS * sqrt(trace[:sigmasq_y]),2),
             alpha=1,color="black")
         
-        ax.set_ylim((min(100.,lowerline[1],lowerline[end]),
-                max(400,upperline[1],upperline[end])))
+        ax.set_ylim((min(1.00,lowerline[1],lowerline[end]),
+                max(4.00,upperline[1],upperline[end])))
         for k in 1:numRats
             i = j*numRats + k
             ax.plot(xs,ys[i,:],color=fewcolors[k], alpha=1.)
