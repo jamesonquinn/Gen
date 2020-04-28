@@ -19,8 +19,6 @@ using Gen
 using PyPlot
 using StatsBase
 
-Gen.binom(10,.5)
-
 # +
 second(x) = x[2] #used to pull logweight from (trace, logweight)
 
