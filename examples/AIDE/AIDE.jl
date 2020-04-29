@@ -25,6 +25,8 @@ second(x) = x[2] #used to pull logweight from tuple of (trace, logweight)
 ;
 
 # ## Text to introduce AIDE here?
+#
+# (needs to fit in with rest of lecture, so I won't write it)
 
 # Compare the distribution of return values of two generative functions, using AIDE
 # Returns an unbiased estimate of an upper bound on the symmetrized KL divergence
@@ -121,12 +123,17 @@ Random.seed!(0)
 importance_cond_binom_for(5)(0,10)
 # -
 
-# Hmm... let's graph the output for 7 heads out of 10, using different numbers of samples for importance sampling.
+# Hmm... let's graph the output for $h$ heads out of $n$, using different numbers of samples for importance sampling.
 
-hist([importance_cond_binom_for(1)(7,10) for i in 1:10000], color="b", alpha =.5)
-hist([importance_cond_binom_for(3)(7,10) for i in 1:10000], color="g", alpha =.5)
-hist([importance_cond_binom_for(20)(7,10) for i in 1:10000], color="r", alpha =.5)
+# +
+h = 7
+n = 10
+
+hist([importance_cond_binom_for(1)(h,n) for i in 1:10000], color="b", alpha =.5) #blue: 1 sample
+hist([importance_cond_binom_for(3)(h,n) for i in 1:10000], color="g", alpha =.5) #green: 3 samples
+hist([importance_cond_binom_for(20)(h,n) for i in 1:10000], color="r", alpha =.5) #red: 20 samples
 ;
+# -
 
 # We also need a gold standard to compare the above inference against. Luckily, because beta and binomial are conjugate distributions, there's an analytic solution:
 
@@ -174,7 +181,7 @@ ms = 5
 # Now we've seen that it works, let's do a slightly more computationally-intensive run and turn it into a graph:
 
 # +
-ns = 400
+ns = 100
 ms = 30
 
 results = [AIDE_compare(importance_cond_binom_for(i), analytic_cond_binom, #generative functions to compare. Should return the important value.
@@ -183,8 +190,20 @@ results = [AIDE_compare(importance_cond_binom_for(i), analytic_cond_binom, #gene
         ns, ns, #Number of traces to draw from each
         ms, ms  #Number of runs of each to use to estimate score
     ) for i in 1:20]
+;
+# +
+conf_sigs = 1.96
+
+fig = figure("Importance sampling performance",figsize=(5,5))
+ax = fig.subplots(1)
+ax.set_title("Importance sampling performance")
+ax.set_ylabel("Symmetrized KL (nats)")
+ax.set_xlabel("Number of samples")
+ax.set_xlim((0,20))
+ax.plot(1:20,[x[1] for x in results])
+ax.fill_between(1:20,[x[1]+x[2]*conf_sigs for x in results],
+                    [x[1]-x[2]*conf_sigs for x in results],alpha=.1,color="red")
+;
 # -
 
-
-
-
+# What next? Should we show how this is affected by a misspecified prior (thus doesn't converge to 0)?
