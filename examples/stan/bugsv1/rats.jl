@@ -1,20 +1,27 @@
+# -*- coding: utf-8 -*-
 # Load necessary libraries
 
 # +
 using Gen
-using GenViz
 using Statistics
+using ProfileView #Make sure this is loaded before PyPlot to avoid stupid gtk version issues
+using Profile
+using PyPlot
+
 include("DistributionsBacked.jl")
 include("IterDeep.jl")
 include("AnimatedPyplot.jl")
 include("nuts.jl")
-using PyPlot
+
+include("unrealizedNormals.jl")
 
 const my_inv_gamma = DistributionsBacked{Float64}((alpha, theta) -> Distributions.InverseGamma(alpha, theta), [true, true], true)
 # -
 # Space for declaring constants.
 
+disable_sample_logging()
 INV_GAMMA_PRIOR_CONSTANT = 0.1;
+
 
 # Canonical Rats data, from from section 6 of Gelfand et al (1990). See http://www.openbugs.net/Examples/Rats.html
 
@@ -33,6 +40,7 @@ ys_raw = ([151, 145, 147, 155, 135, 159, 141, 159, 177, 134,
 ys = reshape([Float64(y) for y = ys_raw],30,5)
 xs = [8.0, 15.0, 22.0, 29.0, 36.0]
 ys = ys ./ 100.
+(N,T) = size(ys)
 
 # These data are the weights of 30 rats, measured at 5 common age values in days. The model is a simple hierarchical/random effects one; a random intercept and random slope for each rat, plus an error term (presumably representing not measurement error, but just the random variation of individual growth curves).
 
@@ -47,7 +55,15 @@ title("Rat growth")
 
 
 # +
-@gen function model(xs::Vector,N::Int32,)
+@gen function oneRat(xs, T, mu_alpha, sigmasq_alpha, mu_beta, sigmasq_beta, sigmasq_y)
+
+    alpha ~ normal(mu_alpha, sqrt(sigmasq_alpha))
+    beta ~ normal(mu_beta, sqrt(sigmasq_beta))
+    y ~ broadcasted_normal([alpha + beta * (xs[t]) for t = 1:T],
+                                        sqrt(sigmasq_y))
+end
+
+@gen function ratsModel(xs::Vector,N::Int32,)
     T = length(xs)
     xbar = mean(xs) #could be precomputed, but YKWTS about premature optimization...
 
@@ -61,10 +77,7 @@ title("Rat growth")
     beta = Vector{Float64}(undef,N)
     y = Vector{Vector{Float64}}(undef,N)
     for n in 1:N
-        alpha[n] = ({:data => n => :alpha} ~ normal(mu_alpha, sqrt(sigmasq_alpha)))
-        beta[n] = ({:data => n => :beta} ~ normal(mu_beta, sqrt(sigmasq_beta)))
-        y[n] = ({:data => n => :y} ~ broadcasted_normal([alpha[n] + beta[n] * (xs[t] - xbar) for t = 1:T],
-                                            sqrt(sigmasq_y)))
+        {:data => n} ~ oneRat(xs .- xbar, T, mu_alpha, sigmasq_alpha, mu_beta, sigmasq_beta, sigmasq_y)
     end
 end
 
@@ -86,7 +99,7 @@ function make_constraints(ys::Array)
 end
 ;
 
-function mcmc_inference(xs, ys, num_iters, update)
+function mcmc_inference(xs, ys, num_iters, update, model = ratsModel)
     results = Vector{Gen.DynamicDSLTrace{DynamicDSLFunction{Any}}}(undef, num_iters+1)
     N = size(ys)[1]
     observations = make_constraints(ys)
@@ -100,6 +113,129 @@ function mcmc_inference(xs, ys, num_iters, update)
     results
 end
 ;
+
+# +
+
+        
+        
+@gen function oneDeferredRat(xs, T, mu_alpha, sigmasq_alpha, mu_beta, sigmasq_beta, sigmasq_y)
+
+    alpha ~ unrealizedIndyNormal(mu_alpha, sqrt(sigmasq_alpha))
+    beta ~ unrealizedIndyNormal(mu_beta, sqrt(sigmasq_beta))
+    for t = 1:T
+        @trace(observedNormal(alpha + beta * (xs[t]), sqrt(sigmasq_y)), "y$(t)")
+    end
+end
+
+
+@gen function deferredRatsModel(xs::Vector,N::Int32,)
+    T = length(xs)
+    xbar = mean(xs) #could be precomputed, but YKWTS about premature optimization...
+
+    mu_alpha ~ normal(0, 10.0)
+    mu_beta ~ normal(0, 1.0)
+    sigmasq_y ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
+    sigmasq_alpha ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
+    sigmasq_beta ~ my_inv_gamma(INV_GAMMA_PRIOR_CONSTANT, INV_GAMMA_PRIOR_CONSTANT)
+
+    alpha = Vector{Float64}(undef,N)
+    beta = Vector{Float64}(undef,N)
+    y = Vector{Vector{Float64}}(undef,N)
+    for n in 1:N
+        {:data => n} ~ oneDeferredRat(xs .- xbar, T, mu_alpha, sigmasq_alpha, mu_beta, sigmasq_beta, sigmasq_y)
+    end
+end
+
+model_transformations = choicemap()
+model_transformations[:sigmasq_y] = transform_log
+model_transformations[:sigmasq_alpha] = transform_log
+model_transformations[:sigmasq_beta] = transform_log
+
+;
+
+# +
+Profile.clear()
+
+function block_mh_d(tr,N,selection)
+    (tr, _) = mh(tr, select(:mu_alpha, :mu_beta))
+    (tr, _) = mh(tr, select(:sigmasq_alpha, :sigmasq_beta, :sigmasq_y))
+
+    for n in 1:N
+        (tr, _) = mh(tr, select(:data => n => :y1,:data => n => :y2,:data => n => :y3,:data => n => :y4,
+                                :data => n => :alpha,:data => n => :beta))
+    end
+    tr
+end
+;
+
+VIZ_INTERVAL = 1
+VIZ_FRAMES = 20
+trs3= Profile.@profile mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, block_mh_d, deferredRatsModel)
+tr3 = trs3[end]
+print("mu_alpha: $(tr3[:mu_alpha]), mu_beta: $(tr3[:mu_beta]), sigma_y: $(sqrt(tr3[:sigmasq_y]))\n")
+;
+
+
+# +
+c = make_constraints(ys)
+alphahats = mean(ys,dims=2)
+alphahat = mean(alphahats)
+betahats = transpose(ys)\xs
+betahat = mean(betahats)
+c[:mu_alpha] = alphahat
+c[:mu_beta] = betahat
+
+c[:sigmasq_beta] = var(betahats) * 2.1601
+c[:sigmasq_alpha] = var(alphahats) * 2.1601
+c[:sigmasq_y] = 0.000001
+
+tr, w = generate(deferredRatsModel, (ys, N), c) #w == -N/2
+
+s = get_score(tr)
+
+c[:sigmasq_y] = 1000.
+
+c[:sigmasq_beta] = var(betahats) * 2.1603
+c[:sigmasq_alpha] = var(alphahats) * 2.1603
+c[:sigmasq_y] = 0.000001
+
+tr2, w2 = generate(deferredRatsModel, (ys, N), c) #w == -N/2
+
+s2 = get_score(tr2)
+
+w, s, w2, s2
+# -
+
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+# ...
+#
+#
+#
+#
+#
+#
+#
+#
 
 function block_mh(tr,N,selection)
     (tr, _) = mh(tr, select(:mu_alpha, :mu_beta))
@@ -161,13 +297,13 @@ function visualize_rats(trace,my_axes)
                         fill(250. + CONF95SIGS * sqrt(trace[:sigmasq_y]),2),
                         fill(250. - CONF95SIGS * sqrt(trace[:sigmasq_y]),2),
             alpha=1,color="black")
-        
+
         ax.set_ylim((min(1.00,lowerline[1],lowerline[end]),
                 max(4.00,upperline[1],upperline[end])))
         for k in 1:numRats
             i = j*numRats + k
             ax.plot(xs,ys[i,:],color=fewcolors[k], alpha=1.)
-            
+
             ratline = trace[:data => i => :alpha] .+ trace[:data => i => :beta] .* (xlims .- xbar)
             ax.plot(xlims, ratline,color=fewcolors[k], alpha=.3)
         end
@@ -177,19 +313,22 @@ function visualize_rats(trace,my_axes)
         else
             ax.set_xlabel("Age (days)")
         end
-            
+
     end
 end
 
 
+
+# +
+
 visualize_rats(tr,make_axes()[2])
 # -
 
-display_animation("rats_mh", make_axes, 
+display_animation("rats_mh", make_axes,
     (ax)->visualize_rats(trs[1],ax),
     (ax,i)->visualize_rats(trs[1+i*VIZ_INTERVAL],ax),
     VIZ_FRAMES)
-    
+
 
 
 
@@ -202,27 +341,44 @@ get_choices(tr2)
 
 print("mu_alpha: $(tr2[:mu_alpha]), mu_beta: $(tr2[:mu_beta]), sigma_y: $(sqrt(tr2[:sigmasq_y]))\n")
 
-display_animation("rats_hmc", make_axes, 
-    (ax)->visualize_rats(trs[1],ax),
-    (ax,i)->visualize_rats(trs[1+i*VIZ_INTERVAL],ax),
-    VIZ_FRAMES)
-    
+if false
+    display_animation("rats_hmc", make_axes,
+        (ax)->visualize_rats(trs[1],ax),
+        (ax,i)->visualize_rats(trs[1+i*VIZ_INTERVAL],ax),
+        VIZ_FRAMES)
+end
+
 
 # +
+Profile.clear()
+
 
 VIZ_INTERVAL = 1
-VIZ_FRAMES = 100
-trs3= mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, (tr, N, selection)->my_nuts(tr, selection, model_transformations))
+VIZ_FRAMES = 20
+trs3= Profile.@profile mcmc_inference(xs, ys, VIZ_INTERVAL * VIZ_FRAMES, (tr, N, selection)->my_nuts(tr, selection, model_transformations))
 tr3 = trs3[end]
 print("mu_alpha: $(tr3[:mu_alpha]), mu_beta: $(tr3[:mu_beta]), sigma_y: $(sqrt(tr3[:sigmasq_y]))\n")
 ;
 # -
 
 
-display_animation("rats_nuts", make_axes, 
+ProfileView.view()
+
+open("profile.txt", "w") do s
+    Profile.print(IOContext(s, :displaysize => (24, 500)))
+end
+
+
+display_animation("rats_nuts", make_axes,
     (ax)->visualize_rats(trs3[1],ax),
     (ax,i)->visualize_rats(trs3[1+i*VIZ_INTERVAL],ax),
     VIZ_FRAMES,200)
-    
+
+# The below is just a sketch of how I think "semi-automatic conjugacy" might work. It's not working code, yet.
+
+l = [(4,6)]
+for (a, (b,c)) in enumerate(l)
+    @warn "hi" a b c
+end
 
 

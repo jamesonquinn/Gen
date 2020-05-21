@@ -3,15 +3,17 @@ using AdvancedHMC
 using Logging
 using LoggingExtras
 
-function ignore_sampling_filter(log_args)
-    !(occursin("sampling steps",log_args.message) || occursin("adapation steps",log_args.message))
-end
+function disable_sample_logging()
+    function ignore_sampling_filter(log_args)
+        !(occursin("sampling steps",log_args.message) || occursin("adapation steps",log_args.message))
+    end
 
-logger = ActiveFilteredLogger(ignore_sampling_filter, global_logger())
+    logger = ActiveFilteredLogger(ignore_sampling_filter, global_logger())
 
 
-if !(@isdefined old_logger) #do this only once
-    old_logger = global_logger(logger)
+    if !(@isdefined old_logger) #do this only once
+        global old_logger = global_logger(logger)
+    end
 end
 
 function my_nuts(trace, selection,
