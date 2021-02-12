@@ -7,3 +7,5 @@
 *.log
 docs/build/
 docs/site/
+.gitignore
+.ipynb_checkpoints/
